@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14110c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Taxímetro</title>
+<style>
+/* ===== PASO 1: estilos ===== */
+:root{--bg:#14110c;--card:#1f1b14;--line:#3a3326;--tx:#f3ead7;--mut:#a89c82;--amb:#ffb81c;--go:#2fbf68;--stop:#e5483c;--pause:#3d8fe0;--on:#101010;color-scheme:dark}
+@media (prefers-color-scheme:light){:root{--bg:#f6f0e2;--card:#fffaf0;--line:#ddd2b8;--tx:#241e12;--mut:#6f6550;--amb:#a86a00;--on:#fff;color-scheme:light}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;max-width:560px;margin:0 auto;padding-top:env(safe-area-inset-top,0px)}
+header{display:flex;justify-content:space-between;align-items:center;padding:14px 18px 6px}
+header h1{font-size:18px;margin:0;font-weight:700;letter-spacing:.2px}
+.chip{font-size:13px;padding:6px 12px;border-radius:99px;border:1px solid var(--line);color:var(--mut);background:var(--card)}
+.chip.warn{color:var(--stop);border-color:var(--stop)}
+main{flex:1;overflow-y:auto;padding:8px 18px 18px}
+.view{display:none}.view.on{display:block}
+.meter{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:22px 18px 18px;text-align:center}
+.tar{display:inline-block;font-size:14px;color:var(--mut);margin-bottom:6px}
+.tar b{color:var(--amb)}
+.fare{font:700 clamp(54px,18vw,92px)/1 ui-monospace,"SF Mono",Menlo,Consolas,monospace;color:var(--amb);font-variant-numeric:tabular-nums;letter-spacing:-1px;text-shadow:0 0 22px color-mix(in srgb,var(--amb) 35%,transparent)}
+.state{margin-top:8px;font-size:14px;color:var(--mut)}
+.state.run{color:var(--go)}.state.pau{color:var(--pause)}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 6px;text-align:center}
+.stat span{display:block;font-size:12px;color:var(--mut)}
+.stat b{font:600 20px ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+.gps{display:flex;justify-content:space-between;align-items:center;font-size:14px;color:var(--mut);margin-bottom:14px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--mut);margin-right:8px}
+.dot.ok{background:var(--go)}.dot.weak{background:var(--amb)}.dot.bad{background:var(--stop)}
+.btns{display:grid;gap:12px}
+button{font:inherit;cursor:pointer;border:0;border-radius:18px;color:var(--on);min-height:64px;font-size:19px;font-weight:700;padding:0 16px}
+button:active{transform:scale(.98)}
+button:focus-visible,input:focus-visible{outline:3px solid var(--amb);outline-offset:2px}
+.go{background:var(--go)}.pause{background:var(--pause)}.stop{background:var(--stop);color:#fff}
+.ghost{background:transparent;color:var(--tx);border:1px solid var(--line);min-height:48px;font-size:16px;font-weight:600}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.hide{display:none!important}
+nav{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line);background:var(--card);padding-bottom:env(safe-area-inset-bottom,0px)}
+nav button{background:transparent;color:var(--mut);border-radius:0;min-height:58px;font-size:15px;font-weight:600}
+nav button.on{color:var(--amb);box-shadow:inset 0 3px 0 var(--amb)}
+h2{font-size:20px;margin:12px 0}
+.trip{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:10px;display:grid;grid-template-columns:1fr auto;gap:2px 10px}
+.trip .p{font:700 22px ui-monospace,Menlo,monospace;color:var(--amb);grid-row:span 2;align-self:center}
+.trip small{color:var(--mut)}
+.empty{color:var(--mut);text-align:center;padding:34px 10px;border:1px dashed var(--line);border-radius:16px}
+.field{display:grid;grid-template-columns:1fr 110px;gap:10px;align-items:center;margin-bottom:10px}
+input[type=number]{width:100%;min-height:46px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--tx);font-size:17px;padding:0 12px}
+fieldset{border:1px solid var(--line);border-radius:16px;margin:0 0 14px;padding:12px 14px}
+legend{padding:0 6px;color:var(--amb);font-weight:700}
+.sw{display:flex;justify-content:space-between;align-items:center;margin:12px 0}
+.sw input{width:26px;height:26px;accent-color:var(--amb)}
+dialog{border:1px solid var(--line);border-radius:22px;background:var(--card);color:var(--tx);width:min(92vw,420px);padding:22px}
+dialog::backdrop{background:rgba(0,0,0,.65)}
+dialog h3{margin:0 0 10px;font-size:22px}
+table{width:100%;border-collapse:collapse;margin:8px 0 16px}
+td{padding:8px 0;border-bottom:1px solid var(--line)}
+td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+tr.tot td{font-size:22px;font-weight:700;color:var(--amb);border-bottom:0}
+.note{font-size:13px;color:var(--mut);margin:0 0 14px}
+#toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--tx);color:var(--bg);padding:12px 18px;border-radius:14px;font-weight:600;max-width:88vw;text-align:center;opacity:0;pointer-events:none;transition:opacity .2s}
+#toast.show{opacity:1}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header><h1>Taxímetro</h1><span class="chip" id="plan">—</span></header>
+
+<main>
+  <section class="view on" id="v-trip">
+    <div class="meter">
+      <div class="tar">Tarifa <b id="tarName">Diurna</b></div>
+      <div class="fare" id="fare">$0</div>
+      <div class="state" id="state">Listo para iniciar</div>
+    </div>
+    <div class="grid">
+      <div class="stat"><span>Distancia</span><b id="kKm">0,00</b></div>
+      <div class="stat"><span>Tiempo</span><b id="kTime">00:00</b></div>
+      <div class="stat"><span>Espera</span><b id="kWait">00:00</b></div>
+    </div>
+    <div class="gps"><span><i class="dot" id="gDot"></i><span id="gTxt">GPS apagado</span></span><span id="kSpeed">0 km/h</span></div>
+    <div class="btns">
+      <button class="go" id="bMain">Iniciar viaje</button>
+      <button class="stop hide" id="bEnd">Finalizar y cobrar</button>
+    </div>
+  </section>
+
+  <section class="view" id="v-hist">
+    <h2>Últimos viajes</h2>
+    <div id="histList"></div>
+    <button class="ghost" id="bClear" style="width:100%">Borrar historial</button>
+  </section>
+
+  <section class="view" id="v-cfg">
+    <h2>Ajustes</h2>
+    <fieldset><legend>Tarifa diurna</legend>
+      <div class="field"><label for="dBase">Bajada de bandera ($)</label><input type="number" id="dBase" min="0" inputmode="decimal"></div>
+      <div class="field"><label for="dKm">Por km ($)</label><input type="number" id="dKm" min="0" inputmode="decimal"></div>
+      <div class="field"><label for="dWait">Espera por minuto ($)</label><input type="number" id="dWait" min="0" inputmode="decimal"></div>
+    </fieldset>
+    <fieldset><legend>Tarifa nocturna</legend>
+      <div class="field"><label for="nBase">Bajada de bandera ($)</label><input type="number" id="nBase" min="0" inputmode="decimal"></div>
+      <div class="field"><label for="nKm">Por km ($)</label><input type="number" id="nKm" min="0" inputmode="decimal"></div>
+      <div class="field"><label for="nWait">Espera por minuto ($)</label><input type="number" id="nWait" min="0" inputmode="decimal"></div>
+      <div class="field"><label for="nFrom">Empieza a las (hora)</label><input type="number" id="nFrom" min="0" max="23" inputmode="numeric"></div>
+      <div class="field"><label for="nTo">Termina a las (hora)</label><input type="number" id="nTo" min="0" max="23" inputmode="numeric"></div>
+    </fieldset>
+    <p class="note">La espera se cobra cuando la velocidad es menor a 5 km/h. El importe sube por fichas: una cada 100 m recorridos y una cada 30 s de espera.</p>
+    <div class="sw"><label for="simChk">Modo simulación (probar sin salir a la calle)</label><input type="checkbox" id="simChk"></div>
+    <div class="btns">
+      <button class="go" id="bSave">Guardar ajustes</button>
+      <button class="ghost" id="bDef">Restaurar valores</button>
+      <button class="ghost" id="bSub">Ver suscripción</button>
+    </div>
+  </section>
+</main>
+
+<nav>
+  <button class="on" data-v="v-trip">Viaje</button>
+  <button data-v="v-hist">Historial</button>
+  <button data-v="v-cfg">Ajustes</button>
+</nav>
+
+<dialog id="dSum">
+  <h3>Viaje finalizado</h3>
+  <table id="sumTbl"></table>
+  <button class="go" style="width:100%" id="sumOk">Listo</button>
+</dialog>
+
+<dialog id="dPay">
+  <h3 id="payTitle">Suscripción</h3>
+  <p id="payBody"></p>
+  <div id="payMailBox" class="field" style="grid-template-columns:1fr">
+    <input type="email" id="payMail" placeholder="Tu email de Mercado Pago" autocomplete="email" style="width:100%;min-height:46px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--tx);font-size:17px;padding:0 12px">
+  </div>
+  <p class="note" id="payNote"></p>
+  <div class="btns">
+    <button class="go" id="payBtn">Suscribirme</button>
+    <button class="ghost" id="payClose">Ahora no</button>
+  </div>
+</dialog>
+
+<dialog id="dAsk">
+  <h3 id="askMsg"></h3>
+  <div class="row2">
+    <button class="ghost" id="askNo">Cancelar</button>
+    <button class="stop" id="askYes">Aceptar</button>
+  </div>
+</dialog>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* ===== PASO 2: lógica ===== */
+(function(){
+'use strict';
+
+// --- Constantes del negocio ---
+const TRIAL_LIMIT = 50;        // viajes gratis de prueba
+const PRICE = 5000;            // precio de la suscripción
+const SUB_DAYS = 30;           // duración de cada suscripción
+const API = '';                // URL del servidor (vacío = mismo dominio que la app). Ej: 'https://taximetro.tudominio.com'
+const DIST_STEP_M = 100;       // una ficha de distancia cada 100 m
+const WAIT_STEP_S = 30;        // una ficha de espera cada 30 s
+const DEFAULTS = {
+  day:   {base:1500, km:900,  wait:200},
+  night: {base:1900, km:1150, wait:250},
+  nightFrom:21, nightTo:6
+};
+
+// --- Utilidades ---
+const $ = s => document.querySelector(s);
+const LS = {
+  get(k,d){ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):d; }catch(e){ return d; } },
+  set(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
+};
+const money = n => '$' + Math.round(n).toLocaleString('es-AR');
+const pad = n => String(n).padStart(2,'0');
+const clock = ms => { const s=Math.floor(ms/1000), h=Math.floor(s/3600), m=Math.floor(s%3600/60); return (h?pad(h)+':':'')+pad(m)+':'+pad(s%60); };
+const km = m => (m/1000).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+function openDlg(d){ if(d.showModal) d.showModal(); else d.setAttribute('open',''); }
+function closeDlg(d){ if(d.close) d.close(); else d.removeAttribute('open'); }
+let askCb=null;
+function ask(msg, yes, cb){ $('#askMsg').textContent=msg; $('#askYes').textContent=yes||'Aceptar'; askCb=cb; openDlg($('#dAsk')); }
+let toastT;
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),3200); }
+function hav(a,b){
+  const R=6371000, r=Math.PI/180, dLa=(b.lat-a.lat)*r, dLo=(b.lng-a.lng)*r;
+  const x=Math.sin(dLa/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLo/2)**2;
+  return 2*R*Math.asin(Math.sqrt(x));
+}
+
+// --- Estado persistente ---
+let cfg = LS.get('taxi.cfg', DEFAULTS);
+let history = LS.get('taxi.history', []);
+let count = LS.get('taxi.count', history.length);
+let subUntil = LS.get('taxi.sub', 0);
+let simMode = LS.get('taxi.sim', false);
+
+// --- Identificador del dispositivo y estado verificado por el servidor ---
+function uid(){ try{ return crypto.randomUUID(); }catch(e){ return 'd'+Date.now().toString(36)+Math.random().toString(36).slice(2,12); } }
+let deviceId = LS.get('taxi.device', null);
+if(!deviceId){ deviceId = uid(); LS.set('taxi.device', deviceId); }
+
+async function api(path, opts){
+  const ctl = new AbortController(), t = setTimeout(()=>ctl.abort(), 12000);
+  try{
+    const r = await fetch(API+path, Object.assign({signal:ctl.signal}, opts||{}));
+    if(!r.ok) throw new Error('http '+r.status);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+// Trae del servidor los viajes de prueba usados y la suscripción vigente.
+// Si no hay conexión se usa lo último guardado en el teléfono.
+async function refreshStatus(){
+  try{
+    const s = await api('/api/status?device='+encodeURIComponent(deviceId));
+    count = Math.max(count, s.trips|0);
+    subUntil = s.until|0;
+    LS.set('taxi.count',count); LS.set('taxi.sub',subUntil);
+    renderPlan();
+    return true;
+  }catch(e){ return false; }
+}
+// Avisa al servidor de cada viaje terminado (si falla, se reintenta en la próxima conexión).
+async function reportTrips(){
+  const pend = LS.get('taxi.pending', 0);
+  if(!pend) return;
+  try{
+    const s = await api('/api/trip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device:deviceId,n:pend})});
+    LS.set('taxi.pending',0);
+    count = Math.max(count, s.trips|0); LS.set('taxi.count',count); renderPlan();
+  }catch(e){}
+}
+
+const isNight = (h = new Date().getHours()) => cfg.nightFrom > cfg.nightTo ? (h >= cfg.nightFrom || h < cfg.nightTo) : (h >= cfg.nightFrom && h < cfg.nightTo);
+const subActive = () => subUntil > Date.now();
+const canStart = () => subActive() || count < TRIAL_LIMIT;
+
+// --- Estado del viaje ---
+const T = {st:'idle', el:0, wait:0, dist:0, last:null, speed:0, rate:null, night:false, startTs:0, tick:0, lastPos:0, watch:null, sim:null, timer:null, lock:null, simN:0, simPos:null};
+
+// El importe sube por fichas completas: solo cambia al completar
+// 100 m de recorrido o 30 s de espera.
+function parts(){
+  const r=T.rate; if(!r) return {b:0,d:0,w:0,total:0,fd:0,fw:0};
+  const fd=Math.floor(T.dist/DIST_STEP_M);
+  const fw=Math.floor(T.wait/(WAIT_STEP_S*1000));
+  const b=Math.round(r.base);
+  const d=Math.round(fd*r.km*DIST_STEP_M/1000);
+  const w=Math.round(fw*r.wait*WAIT_STEP_S/60);
+  return {b,d,w,total:b+d+w,fd,fw};
+}
+
+// --- Render ---
+function renderPlan(){
+  const c=$('#plan');
+  if(subActive()){ c.textContent='Suscripción hasta '+new Date(subUntil).toLocaleDateString('es-AR'); c.className='chip'; }
+  else if(count<TRIAL_LIMIT){ c.textContent='Prueba: quedan '+(TRIAL_LIMIT-count)+' viajes'; c.className='chip'; }
+  else { c.textContent='Prueba terminada'; c.className='chip warn'; }
+}
+function renderTrip(){
+  const idle=T.st==='idle';
+  const night = idle ? isNight() : T.night;
+  $('#tarName').textContent = night ? 'Nocturna' : 'Diurna';
+  const base = idle ? (night?cfg.night:cfg.day).base : parts().total;
+  $('#fare').textContent = money(idle ? 0 : base);
+  $('#kKm').textContent = km(T.dist)+' km';
+  $('#kTime').textContent = clock(T.el);
+  $('#kWait').textContent = clock(T.wait);
+  $('#kSpeed').textContent = Math.round(T.speed)+' km/h';
+  const s=$('#state');
+  s.className='state'+(T.st==='running'?' run':T.st==='paused'?' pau':'');
+  s.textContent = idle ? 'Listo para iniciar' : T.st==='running' ? (T.speed<5?'En espera':'En marcha') : 'Viaje en pausa';
+  const m=$('#bMain'), e=$('#bEnd');
+  m.textContent = idle ? 'Iniciar viaje' : T.st==='running' ? 'Pausar' : 'Reanudar';
+  m.className = idle ? 'go' : T.st==='running' ? 'pause' : 'go';
+  e.classList.toggle('hide', idle);
+}
+function setGps(state, txt){ $('#gDot').className='dot '+state; $('#gTxt').textContent=txt; }
+
+// --- Posicionamiento ---
+function onPos(p){
+  const c=p.coords, acc=c.accuracy||999;
+  T.lastPos=Date.now();
+  if(acc>50){ setGps('weak','Señal débil ('+Math.round(acc)+' m)'); return; }
+  setGps('ok','GPS activo ('+Math.round(acc)+' m)');
+  const cur={lat:c.latitude,lng:c.longitude,ts:p.timestamp||Date.now()};
+  if(!T.last || T.st!=='running'){ T.last=cur; }
+  else {
+    const d=hav(T.last,cur), dt=(cur.ts-T.last.ts)/1000, min=Math.max(5,acc/2);
+    if(d>=min && dt>0 && d/dt<70){ T.dist+=d; T.speed=d/dt*3.6; T.last=cur; }
+  }
+  if(c.speed!=null && !isNaN(c.speed)) T.speed=c.speed*3.6;
+}
+function onErr(e){
+  const msg = e.code===1 ? 'Permiso de ubicación denegado. Actívalo en el navegador.' : e.code===2 ? 'No se pudo obtener la ubicación.' : 'El GPS tardó demasiado en responder.';
+  setGps('bad', e.code===1?'Sin permiso de GPS':'Sin señal GPS'); toast(msg);
+}
+function startPositioning(){
+  if(simMode){ startSim(); return; }
+  if(!('geolocation' in navigator)){ setGps('bad','GPS no disponible'); toast('Este dispositivo no tiene geolocalización.'); return; }
+  setGps('weak','Buscando señal…');
+  T.watch=navigator.geolocation.watchPosition(onPos,onErr,{enableHighAccuracy:true,maximumAge:0,timeout:15000});
+}
+function stopPositioning(){
+  if(T.watch!=null){ navigator.geolocation.clearWatch(T.watch); T.watch=null; }
+  if(T.sim){ clearInterval(T.sim); T.sim=null; }
+  setGps('', 'GPS apagado');
+}
+// Simulación: 20 s a 30 km/h, 8 s detenido, en bucle
+function startSim(){
+  T.simN=0; T.simPos={lat:-40.8135,lng:-62.9967};
+  setGps('ok','Simulación activa');
+  T.sim=setInterval(()=>{
+    const moving=(T.simN++ % 28)<20;
+    if(moving) T.simPos.lat += 8.33/111320;
+    onPos({coords:{latitude:T.simPos.lat,longitude:T.simPos.lng,accuracy:5,speed:moving?8.33:0},timestamp:Date.now()});
+  },1000);
+}
+
+// --- Pantalla siempre encendida ---
+async function lockScreen(){ try{ if('wakeLock' in navigator) T.lock=await navigator.wakeLock.request('screen'); }catch(e){} }
+function unlockScreen(){ try{ if(T.lock){ T.lock.release(); T.lock=null; } }catch(e){} }
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible' && T.st==='running') lockScreen(); });
+
+// --- Ciclo del viaje ---
+function loop(){
+  const now=Date.now(), dt=now-T.tick; T.tick=now;
+  if(now-T.lastPos>6000 && T.st==='running') T.speed=0;
+  if(T.st==='running'){ T.el+=dt; if(T.speed<5) T.wait+=dt; }
+  renderTrip();
+}
+async function begin(){
+  if(!canStart()){
+    await refreshStatus();            // quizás ya pagó desde otro lado
+    if(!canStart()){ openPay(); return; }
+  }
+  T.night=isNight(); T.rate=T.night?cfg.night:cfg.day;
+  Object.assign(T,{st:'running',el:0,wait:0,dist:0,last:null,speed:0,startTs:Date.now(),tick:Date.now(),lastPos:Date.now()});
+  startPositioning(); lockScreen();
+  T.timer=setInterval(loop,500);
+  renderTrip();
+}
+function togglePause(){
+  if(T.st==='running'){ T.st='paused'; T.speed=0; T.last=null; }
+  else if(T.st==='paused'){ T.st='running'; T.tick=Date.now(); T.lastPos=Date.now(); }
+  renderTrip();
+}
+function finish(){ ask('¿Finalizar el viaje y cobrar?','Finalizar',doFinish); }
+function doFinish(){
+  clearInterval(T.timer); stopPositioning(); unlockScreen();
+  const p=parts();
+  const rec={ts:T.startTs,end:Date.now(),dist:T.dist,el:T.el,wait:T.wait,night:T.night,rate:T.rate,parts:p};
+  history.unshift(rec); history=history.slice(0,100); count++;
+  LS.set('taxi.history',history); LS.set('taxi.count',count);
+  LS.set('taxi.pending', LS.get('taxi.pending',0)+1); reportTrips();
+  showSummary(rec);
+  Object.assign(T,{st:'idle',el:0,wait:0,dist:0,last:null,speed:0,rate:null});
+  renderTrip(); renderPlan(); renderHist();
+}
+function showSummary(r){
+  const p=r.parts;
+  const fd = p.fd!=null ? p.fd : Math.floor(r.dist/DIST_STEP_M);
+  const fw = p.fw!=null ? p.fw : Math.floor(r.wait/(WAIT_STEP_S*1000));
+  $('#sumTbl').innerHTML =
+    '<tr><td>Tarifa</td><td>'+(r.night?'Nocturna':'Diurna')+'</td></tr>'+
+    '<tr><td>Bajada de bandera</td><td>'+money(p.b)+'</td></tr>'+
+    '<tr><td>Distancia ('+fd+' fichas × '+money(r.rate.km*DIST_STEP_M/1000)+')</td><td>'+money(p.d)+'</td></tr>'+
+    '<tr><td>Espera ('+fw+' fichas × '+money(r.rate.wait*WAIT_STEP_S/60)+')</td><td>'+money(p.w)+'</td></tr>'+
+    '<tr><td>Recorrido / duración</td><td>'+km(r.dist)+' km · '+clock(r.el)+'</td></tr>'+
+    '<tr class="tot"><td>Total a cobrar</td><td>'+money(p.total)+'</td></tr>';
+  openDlg($('#dSum'));
+}
+
+// --- Historial ---
+function renderHist(){
+  const box=$('#histList');
+  if(!history.length){ box.innerHTML='<div class="empty">Todavía no hay viajes. Cuando finalices uno, aparecerá aquí.</div>'; return; }
+  box.innerHTML=history.slice(0,30).map(r=>{
+    const d=new Date(r.ts);
+    return '<div class="trip"><div><b>'+d.toLocaleDateString('es-AR')+' '+pad(d.getHours())+':'+pad(d.getMinutes())+'</b></div>'+
+      '<div class="p">'+money(r.parts.total)+'</div>'+
+      '<small>'+km(r.dist)+' km · '+clock(r.el)+' · '+(r.night?'Nocturna':'Diurna')+'</small></div>';
+  }).join('');
+}
+
+// --- Suscripción ---
+function openPay(){
+  const used=Math.min(count,TRIAL_LIMIT);
+  if(subActive()){
+    $('#payTitle').textContent='Suscripción activa';
+    $('#payBody').textContent='Tu suscripción está vigente hasta el '+new Date(subUntil).toLocaleDateString('es-AR')+'. Ya hiciste '+count+' viajes.';
+    $('#payNote').textContent='';
+    $('#payBtn').textContent='Renovar por '+money(PRICE);
+  } else {
+    const over=count>=TRIAL_LIMIT;
+    $('#payTitle').textContent=over?'Se terminó la prueba':'Prueba gratuita';
+    $('#payBody').textContent=over
+      ? 'Completaste los '+TRIAL_LIMIT+' viajes de prueba. Para seguir usando el taxímetro, suscríbete por '+money(PRICE)+' al mes.'
+      : 'Llevas '+used+' de '+TRIAL_LIMIT+' viajes de prueba. Después, la suscripción cuesta '+money(PRICE)+' al mes.';
+    $('#payNote').textContent='Pagás con Mercado Pago. Se renueva cada mes y podés cancelarla cuando quieras desde tu cuenta de Mercado Pago.';
+    $('#payBtn').textContent='Suscribirme por '+money(PRICE);
+  }
+  $('#payMailBox').classList.toggle('hide', subActive());
+  openDlg($('#dPay'));
+}
+let paying=false;
+async function pay(){
+  if(paying) return;
+  const email=$('#payMail').value.trim();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ toast('Escribí un email válido (el mismo de tu cuenta de Mercado Pago).'); return; }
+  paying=true; $('#payBtn').textContent='Abriendo Mercado Pago…';
+  try{
+    const r=await api('/api/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device:deviceId,email})});
+    LS.set('taxi.payTs',Date.now());
+    window.location.href=r.url;      // se completa el pago en Mercado Pago y vuelve a la app
+  }catch(e){
+    toast('No se pudo iniciar el pago. Revisá tu conexión e intentá de nuevo.');
+    $('#payBtn').textContent='Suscribirme por '+money(PRICE);
+  }finally{ paying=false; }
+}
+// Al volver de Mercado Pago, el aviso de pago puede tardar unos segundos: se consulta varias veces.
+async function waitPayment(){
+  toast('Verificando tu pago…');
+  for(let i=0;i<12;i++){
+    await refreshStatus();
+    if(subActive()){ toast('¡Suscripción activa hasta '+new Date(subUntil).toLocaleDateString('es-AR')+'!'); return; }
+    await new Promise(r=>setTimeout(r,5000));
+  }
+  toast('Todavía no vemos el pago. Si ya pagaste, abrí la app de nuevo en unos minutos.');
+}
+
+// --- Ajustes ---
+const IDS={dBase:['day','base'],dKm:['day','km'],dWait:['day','wait'],nBase:['night','base'],nKm:['night','km'],nWait:['night','wait']};
+function loadCfg(){
+  for(const id in IDS){ $('#'+id).value=cfg[IDS[id][0]][IDS[id][1]]; }
+  $('#nFrom').value=cfg.nightFrom; $('#nTo').value=cfg.nightTo; $('#simChk').checked=simMode;
+}
+function saveCfg(){
+  const n=JSON.parse(JSON.stringify(cfg));
+  for(const id in IDS){
+    const v=parseFloat($('#'+id).value);
+    if(isNaN(v)||v<0){ toast('Revisa los valores: deben ser números mayores o iguales a 0.'); return; }
+    n[IDS[id][0]][IDS[id][1]]=v;
+  }
+  const f=parseInt($('#nFrom').value,10), t=parseInt($('#nTo').value,10);
+  if(isNaN(f)||isNaN(t)||f<0||f>23||t<0||t>23){ toast('Las horas deben estar entre 0 y 23.'); return; }
+  n.nightFrom=f; n.nightTo=t; cfg=n; simMode=$('#simChk').checked;
+  LS.set('taxi.cfg',cfg); LS.set('taxi.sim',simMode);
+  renderTrip(); toast('Ajustes guardados');
+}
+
+// --- Eventos ---
+document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id===b.dataset.v));
+  if(b.dataset.v==='v-cfg') loadCfg();
+}));
+$('#bMain').addEventListener('click',()=>{ T.st==='idle' ? begin() : togglePause(); });
+$('#bEnd').addEventListener('click',finish);
+$('#sumOk').addEventListener('click',()=>closeDlg($('#dSum')));
+$('#payBtn').addEventListener('click',pay);
+$('#payClose').addEventListener('click',()=>closeDlg($('#dPay')));
+$('#bSub').addEventListener('click',openPay);
+$('#bSave').addEventListener('click',saveCfg);
+$('#bDef').addEventListener('click',()=>ask('¿Restaurar las tarifas originales?','Restaurar',()=>{ cfg=JSON.parse(JSON.stringify(DEFAULTS)); LS.set('taxi.cfg',cfg); loadCfg(); renderTrip(); toast('Valores restaurados'); }));
+$('#bClear').addEventListener('click',()=>{ if(history.length) ask('¿Borrar el historial? El contador de viajes de prueba no se reinicia.','Borrar',()=>{ history=[]; LS.set('taxi.history',history); renderHist(); }); });
+$('#askNo').addEventListener('click',()=>{ askCb=null; closeDlg($('#dAsk')); });
+$('#askYes').addEventListener('click',()=>{ const f=askCb; askCb=null; closeDlg($('#dAsk')); if(f) f(); });
+window.addEventListener('beforeunload',e=>{ if(T.st!=='idle'){ e.preventDefault(); e.returnValue=''; } });
+
+// --- Inicio ---
+renderPlan(); renderTrip(); renderHist(); loadCfg();
+reportTrips();
+if(/[?&]pago=/.test(location.search)){ history_clean(); waitPayment(); } else refreshStatus();
+function history_clean(){ try{ window.history.replaceState(null,'',location.pathname); }catch(e){} }
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible' && T.st==='idle'){ reportTrips(); refreshStatus(); } });
+setInterval(()=>{ if(T.st==='idle') renderTrip(); },60000);
+})();
+</script>
+</body>
+</html>

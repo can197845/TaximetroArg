@@ -1,0 +1,13 @@
+{
+  "name": "taximetro",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Taxímetro para celular con suscripción por Mercado Pago",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
