@@ -121,7 +121,8 @@ tr.tot td{font-size:22px;font-weight:700;color:var(--amb);border-bottom:0}
     <div class="btns">
       <button class="go" id="bSave">Guardar ajustes</button>
       <button class="ghost" id="bDef">Restaurar valores</button>
-      <button class="ghost" id="bSub">Ver suscripción</button>
+      <button class="go" id="bSub">Suscribirme ahora</button>
+      <button class="ghost hide" id="bUnsub">Cancelar suscripción</button>
       <button class="ghost" id="bOut">Cerrar sesión</button>
     </div>
   </section>
@@ -155,7 +156,7 @@ tr.tot td{font-size:22px;font-weight:700;color:var(--amb);border-bottom:0}
 <dialog id="dAsk">
   <h3 id="askMsg"></h3>
   <div class="row2">
-    <button class="ghost" id="askNo">Cancelar</button>
+    <button class="ghost" id="askNo">Volver</button>
     <button class="stop" id="askYes">Aceptar</button>
   </div>
 </dialog>
@@ -215,6 +216,7 @@ let cfg = LS.get('taxi.cfg', DEFAULTS);
 let history = LS.get('taxi.history', []);
 let count = LS.get('taxi.count', history.length);
 let subUntil = LS.get('taxi.sub', 0);
+let mpStatus = LS.get('taxi.mp', '');   // estado de la suscripción en Mercado Pago (authorized, cancelled, ...)
 let simMode = LS.get('taxi.sim', false);
 
 // --- Cuenta de Google y estado verificado por el servidor ---
@@ -240,8 +242,8 @@ async function refreshStatus(){
   try{
     const s = await api('/api/status');
     count = (s.trips|0) + pendingTrips();
-    subUntil = s.until|0;
-    LS.set('taxi.count',count); LS.set('taxi.sub',subUntil);
+    subUntil = Number(s.until)||0; mpStatus = s.mpStatus||'';
+    LS.set('taxi.count',count); LS.set('taxi.sub',subUntil); LS.set('taxi.mp',mpStatus);
     renderPlan();
     return true;
   }catch(e){ return false; }
@@ -292,8 +294,8 @@ async function onGoogle(resp){
     const s = await r.json();
     session = {token:s.token, email:s.email, name:s.name};
     LS.set('taxi.session', session);
-    count = (s.trips|0) + pendingTrips(); subUntil = s.until|0;
-    LS.set('taxi.count',count); LS.set('taxi.sub',subUntil);
+    count = (s.trips|0) + pendingTrips(); subUntil = Number(s.until)||0; mpStatus = s.mpStatus||'';
+    LS.set('taxi.count',count); LS.set('taxi.sub',subUntil); LS.set('taxi.mp',mpStatus);
     hideLogin(); renderPlan(); renderAcct(); reportTrips();
     toast('Ingresaste como '+s.email);
   }catch(e){
@@ -335,6 +337,14 @@ function renderPlan(){
   if(subActive()){ c.textContent='Suscripción hasta '+new Date(subUntil).toLocaleDateString('es-AR'); c.className='chip'; }
   else if(count<TRIAL_LIMIT){ c.textContent='Prueba: quedan '+(TRIAL_LIMIT-count)+' viajes'; c.className='chip'; }
   else { c.textContent='Prueba terminada'; c.className='chip warn'; }
+  renderSubBtns();
+}
+// Con la suscripción activa se ofrece cancelarla; si no, suscribirse (se puede en cualquier momento).
+function renderSubBtns(){
+  const auto = mpStatus==='authorized';
+  $('#bSub').classList.toggle('hide', auto);
+  $('#bUnsub').classList.toggle('hide', !auto);
+  $('#bSub').textContent = subActive() ? 'Suscribirme de nuevo' : 'Suscribirme ahora';
 }
 function renderTrip(){
   const idle=T.st==='idle';
@@ -467,11 +477,15 @@ function renderHist(){
 // --- Suscripción ---
 function openPay(){
   const used=Math.min(count,TRIAL_LIMIT);
+  const auto = mpStatus==='authorized';
+  $('#payBtn').classList.toggle('hide', auto);
   if(subActive()){
-    $('#payTitle').textContent='Suscripción activa';
-    $('#payBody').textContent='Tu suscripción está vigente hasta el '+new Date(subUntil).toLocaleDateString('es-AR')+'. Ya hiciste '+count+' viajes.';
-    $('#payNote').textContent='';
-    $('#payBtn').textContent='Renovar por '+money(PRICE);
+    $('#payTitle').textContent = auto ? 'Suscripción activa' : 'Suscripción cancelada';
+    $('#payBody').textContent = auto
+      ? 'Tu suscripción está vigente hasta el '+new Date(subUntil).toLocaleDateString('es-AR')+' y se renueva sola cada mes. Ya hiciste '+count+' viajes.'
+      : 'Cancelaste la suscripción: no se te cobra más y podés usar la app hasta el '+new Date(subUntil).toLocaleDateString('es-AR')+'. Si querés seguir después, suscribite de nuevo.';
+    $('#payNote').textContent = auto ? 'Podés cancelarla cuando quieras desde Ajustes.' : 'Pagás con Mercado Pago. Se renueva cada mes y podés cancelarla cuando quieras.';
+    $('#payBtn').textContent='Suscribirme de nuevo por '+money(PRICE);
   } else {
     const over=count>=TRIAL_LIMIT;
     $('#payTitle').textContent=over?'Se terminó la prueba':'Prueba gratuita';
@@ -481,7 +495,7 @@ function openPay(){
     $('#payNote').textContent='Pagás con Mercado Pago. Se renueva cada mes y podés cancelarla cuando quieras desde tu cuenta de Mercado Pago.';
     $('#payBtn').textContent='Suscribirme por '+money(PRICE);
   }
-  $('#payMailBox').classList.toggle('hide', subActive());
+  $('#payMailBox').classList.toggle('hide', auto);
   if(session && !$('#payMail').value) $('#payMail').value = session.email;
   openDlg($('#dPay'));
 }
@@ -499,6 +513,19 @@ async function pay(){
     toast('No se pudo iniciar el pago. Revisá tu conexión e intentá de nuevo.');
     $('#payBtn').textContent='Suscribirme por '+money(PRICE);
   }finally{ paying=false; }
+}
+function unsub(){
+  ask('¿Cancelar la suscripción? Dejan de cobrarte y seguís usando la app hasta el '+new Date(subUntil).toLocaleDateString('es-AR')+'.','Cancelar suscripción',async()=>{
+    try{
+      const r = await api('/api/unsubscribe',{method:'POST'});
+      mpStatus='cancelled'; subUntil=Number(r.until)||0;
+      LS.set('taxi.mp',mpStatus); LS.set('taxi.sub',subUntil);
+      renderPlan();
+      toast('Suscripción cancelada. Seguís con acceso hasta el '+new Date(subUntil).toLocaleDateString('es-AR')+'.');
+    }catch(e){
+      toast('No se pudo cancelar. Probá de nuevo o cancelala desde tu cuenta de Mercado Pago.');
+    }
+  });
 }
 // Al volver de Mercado Pago, el aviso de pago puede tardar unos segundos: se consulta varias veces.
 async function waitPayment(){
@@ -544,6 +571,7 @@ $('#payBtn').addEventListener('click',pay);
 $('#payClose').addEventListener('click',()=>closeDlg($('#dPay')));
 $('#bSub').addEventListener('click',openPay);
 $('#bOut').addEventListener('click',logout);
+$('#bUnsub').addEventListener('click',unsub);
 $('#bSave').addEventListener('click',saveCfg);
 $('#bDef').addEventListener('click',()=>ask('¿Restaurar las tarifas originales?','Restaurar',()=>{ cfg=JSON.parse(JSON.stringify(DEFAULTS)); LS.set('taxi.cfg',cfg); loadCfg(); renderTrip(); toast('Valores restaurados'); }));
 $('#bClear').addEventListener('click',()=>{ if(history.length) ask('¿Borrar el historial? El contador de viajes de prueba no se reinicia.','Borrar',()=>{ history=[]; LS.set('taxi.history',history); renderHist(); }); });

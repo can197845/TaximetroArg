@@ -19,7 +19,7 @@ const crypto = require('crypto');
 
 const DAY = 86400000;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
-const TOKEN = process.env.MP_ACCESS_TOKEN || 'APP_USR-3585737753380043-101114-f899a8c8eba482c0421dd4ed4da513ea-3754974508';
+const TOKEN = process.env.MP_ACCESS_TOKEN || '';
 const BASE_URL = (process.env.BASE_URL || '').replace(/\/$/, '');
 const PRICE = Number(process.env.PRICE || 5000);
 const GRACE_MS = Number(process.env.GRACE_DAYS || 2) * DAY;
@@ -125,8 +125,12 @@ async function syncPreapproval(id) {
     const next = p.next_payment_date ? Date.parse(p.next_payment_date) : 0;
     const until = (next > Date.now() ? next : Date.now() + 30 * DAY) + GRACE_MS;
     a.until = Math.max(a.until, until);
+    a.preapprovalId = id;
+    a.mpStatus = 'authorized';
+  } else if (!a.preapprovalId || id === a.preapprovalId) {
+    // Un aviso viejo de otra suscripción (por ejemplo una que nunca se pagó) no pisa la que está activa.
+    a.mpStatus = p.status;
   }
-  a.mpStatus = p.status;
   save();
   console.log('Suscripción', id, p.status, '→ cuenta', a.email);
 }
@@ -176,14 +180,14 @@ const server = http.createServer(async (req, res) => {
       a.email = g.email; a.name = g.name || '';
       const token = newSession(g.sub);
       save();
-      return send(res, 200, { token, email: a.email, name: a.name, trips: a.trips, until: a.until });
+      return send(res, 200, { token, email: a.email, name: a.name, trips: a.trips, until: a.until, mpStatus: a.mpStatus || '' });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/status') {
       const sub = auth(req);
       if (!sub) return send(res, 401, { error: 'sesión inválida' });
       const a = db.accounts[sub];
-      return send(res, 200, { trips: a.trips, until: a.until, email: a.email });
+      return send(res, 200, { trips: a.trips, until: a.until, email: a.email, mpStatus: a.mpStatus || '' });
     }
 
     if (req.method === 'POST' && url.pathname === '/api/trip') {
@@ -202,6 +206,7 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(b.email || '')) return send(res, 400, { error: 'email inválido' });
       if (!TOKEN || !BASE_URL) return send(res, 500, { error: 'servidor sin configurar' });
+      if (db.accounts[sub].mpStatus === 'authorized') return send(res, 409, { error: 'ya tenés una suscripción activa' });
       const p = await mp('POST', '/preapproval', {
         reason: 'Taxímetro - suscripción mensual',
         external_reference: sub,
@@ -212,6 +217,30 @@ const server = http.createServer(async (req, res) => {
       });
       db.byPreapproval[p.id] = sub; save();
       return send(res, 200, { url: p.init_point });
+    }
+
+    // Cancela la suscripción en Mercado Pago. El usuario conserva el acceso hasta que termina lo ya pagado.
+    if (req.method === 'POST' && url.pathname === '/api/unsubscribe') {
+      const sub = auth(req);
+      if (!sub) return send(res, 401, { error: 'sesión inválida' });
+      if (!TOKEN) return send(res, 500, { error: 'servidor sin configurar' });
+      const a = db.accounts[sub];
+      const ids = Object.keys(db.byPreapproval).filter(i => db.byPreapproval[i] === sub);
+      let cancelled = 0, failed = 0;
+      for (const id of ids) {
+        try {
+          const p = await mp('GET', '/preapproval/' + encodeURIComponent(id));
+          if (p.status === 'authorized' || p.status === 'paused') {
+            await mp('PUT', '/preapproval/' + encodeURIComponent(id), { status: 'cancelled' });
+            cancelled++;
+          }
+        } catch (e) { failed++; console.error('Cancelación:', id, e.message, JSON.stringify(e.detail || {})); }
+      }
+      if (failed) return send(res, 502, { error: 'no se pudo cancelar en Mercado Pago' });
+      if (cancelled > 0 || a.mpStatus === 'authorized') a.mpStatus = 'cancelled';
+      save();
+      console.log('Suscripción cancelada →', a.email, '(' + cancelled + ')');
+      return send(res, 200, { ok: true, until: a.until, cancelled });
     }
 
     // Aviso de Mercado Pago (configurar en el panel de la aplicación: Webhooks → suscripciones y pagos)
@@ -239,4 +268,4 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) server.listen(PORT, () => console.log('Taxímetro en el puerto ' + PORT));
-module.exports = { verifyGoogle };
+module.exports = { verifyGoogle, server };
