@@ -65,6 +65,11 @@ tr.tot td{font-size:22px;font-weight:700;color:var(--amb);border-bottom:0}
 .note{font-size:13px;color:var(--mut);margin:0 0 14px}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--tx);color:var(--bg);padding:12px 18px;border-radius:14px;font-weight:600;max-width:88vw;text-align:center;opacity:0;pointer-events:none;transition:opacity .2s}
 #toast.show{opacity:1}
+#login{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center}
+#login h2{font-size:28px;margin:0}
+#login p{max-width:340px;margin:0;color:var(--mut)}
+#gBtn{min-height:44px;display:flex;justify-content:center}
+#loginMsg{color:var(--stop);min-height:1.4em}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -112,10 +117,12 @@ tr.tot td{font-size:22px;font-weight:700;color:var(--amb);border-bottom:0}
     </fieldset>
     <p class="note">La espera se cobra cuando la velocidad es menor a 5 km/h. El importe sube por fichas: una cada 100 m recorridos y una cada 30 s de espera.</p>
     <div class="sw"><label for="simChk">Modo simulación (probar sin salir a la calle)</label><input type="checkbox" id="simChk"></div>
+    <p class="note" id="acctInfo"></p>
     <div class="btns">
       <button class="go" id="bSave">Guardar ajustes</button>
       <button class="ghost" id="bDef">Restaurar valores</button>
       <button class="ghost" id="bSub">Ver suscripción</button>
+      <button class="ghost" id="bOut">Cerrar sesión</button>
     </div>
   </section>
 </main>
@@ -152,6 +159,14 @@ tr.tot td{font-size:22px;font-weight:700;color:var(--amb);border-bottom:0}
     <button class="stop" id="askYes">Aceptar</button>
   </div>
 </dialog>
+
+<div id="login" class="hide">
+  <h2>Taxímetro</h2>
+  <p>Ingresá con tu cuenta de Google para empezar. Tus viajes de prueba y tu suscripción quedan guardados en tu cuenta.</p>
+  <div id="gBtn"></div>
+  <p id="loginMsg" role="alert"></p>
+  <p class="note">Si no te deja ingresar, abrí esta página desde Chrome o Safari y no desde dentro de otra aplicación.</p>
+</div>
 
 <div id="toast" role="status" aria-live="polite"></div>
 
@@ -202,25 +217,29 @@ let count = LS.get('taxi.count', history.length);
 let subUntil = LS.get('taxi.sub', 0);
 let simMode = LS.get('taxi.sim', false);
 
-// --- Identificador del dispositivo y estado verificado por el servidor ---
-function uid(){ try{ return crypto.randomUUID(); }catch(e){ return 'd'+Date.now().toString(36)+Math.random().toString(36).slice(2,12); } }
-let deviceId = LS.get('taxi.device', null);
-if(!deviceId){ deviceId = uid(); LS.set('taxi.device', deviceId); }
+// --- Cuenta de Google y estado verificado por el servidor ---
+// Los viajes de prueba y la suscripción se guardan en el servidor, atados a la cuenta de Google.
+let session = LS.get('taxi.session', null);   // {token, email, name}
+const authHdr = () => session ? {Authorization:'Bearer '+session.token} : {};
 
 async function api(path, opts){
+  opts = opts || {};
   const ctl = new AbortController(), t = setTimeout(()=>ctl.abort(), 12000);
   try{
-    const r = await fetch(API+path, Object.assign({signal:ctl.signal}, opts||{}));
+    const r = await fetch(API+path, Object.assign({}, opts, {signal:ctl.signal, headers:Object.assign({}, opts.headers||{}, authHdr())}));
+    if(r.status===401 && session){ session=null; LS.set('taxi.session',null); showLogin(); }
     if(!r.ok) throw new Error('http '+r.status);
     return await r.json();
   } finally { clearTimeout(t); }
 }
+const pendingTrips = () => LS.get('taxi.pending', 0);
 // Trae del servidor los viajes de prueba usados y la suscripción vigente.
 // Si no hay conexión se usa lo último guardado en el teléfono.
 async function refreshStatus(){
+  if(!session) return false;
   try{
-    const s = await api('/api/status?device='+encodeURIComponent(deviceId));
-    count = Math.max(count, s.trips|0);
+    const s = await api('/api/status');
+    count = (s.trips|0) + pendingTrips();
     subUntil = s.until|0;
     LS.set('taxi.count',count); LS.set('taxi.sub',subUntil);
     renderPlan();
@@ -229,13 +248,66 @@ async function refreshStatus(){
 }
 // Avisa al servidor de cada viaje terminado (si falla, se reintenta en la próxima conexión).
 async function reportTrips(){
-  const pend = LS.get('taxi.pending', 0);
-  if(!pend) return;
+  const pend = pendingTrips();
+  if(!pend || !session) return;
   try{
-    const s = await api('/api/trip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device:deviceId,n:pend})});
+    const s = await api('/api/trip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({n:pend})});
     LS.set('taxi.pending',0);
-    count = Math.max(count, s.trips|0); LS.set('taxi.count',count); renderPlan();
+    count = s.trips|0; LS.set('taxi.count',count); renderPlan();
   }catch(e){}
+}
+
+// --- Ingreso con Google ---
+let gReady=false, gLoading=false;
+function showLogin(){
+  $('#login').classList.remove('hide');
+  $('#loginMsg').textContent='';
+  loadGoogle();
+}
+function hideLogin(){ $('#login').classList.add('hide'); }
+async function loadGoogle(){
+  if(gReady || gLoading) return;
+  gLoading=true;
+  try{
+    const cfgSrv = await api('/api/config');
+    if(!cfgSrv.googleClientId){ $('#loginMsg').textContent='El ingreso todavía no está configurado en el servidor.'; gLoading=false; return; }
+    await new Promise((ok,no)=>{
+      const s=document.createElement('script');
+      s.src='https://accounts.google.com/gsi/client'; s.async=true; s.onload=ok; s.onerror=no;
+      document.head.appendChild(s);
+    });
+    google.accounts.id.initialize({client_id:cfgSrv.googleClientId, callback:onGoogle, auto_select:false});
+    google.accounts.id.renderButton($('#gBtn'),{theme:'filled_blue',size:'large',text:'continue_with',shape:'pill',width:280});
+    gReady=true;
+  }catch(e){
+    $('#loginMsg').textContent='No se pudo cargar el ingreso. Revisá tu conexión y recargá la página.';
+  }
+  gLoading=false;
+}
+async function onGoogle(resp){
+  $('#loginMsg').textContent='Verificando…';
+  try{
+    const r = await fetch(API+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({credential:resp.credential})});
+    if(!r.ok) throw new Error('http '+r.status);
+    const s = await r.json();
+    session = {token:s.token, email:s.email, name:s.name};
+    LS.set('taxi.session', session);
+    count = (s.trips|0) + pendingTrips(); subUntil = s.until|0;
+    LS.set('taxi.count',count); LS.set('taxi.sub',subUntil);
+    hideLogin(); renderPlan(); renderAcct(); reportTrips();
+    toast('Ingresaste como '+s.email);
+  }catch(e){
+    $('#loginMsg').textContent='No se pudo ingresar con esa cuenta. Probá de nuevo.';
+  }
+}
+function renderAcct(){
+  $('#acctInfo').textContent = session ? 'Cuenta: '+session.email : '';
+}
+function logout(){
+  ask('¿Cerrar sesión? Vas a necesitar ingresar de nuevo con Google.','Cerrar sesión',()=>{
+    try{ if(window.google && google.accounts) google.accounts.id.disableAutoSelect(); }catch(e){}
+    session=null; LS.set('taxi.session',null); renderAcct(); showLogin();
+  });
 }
 
 const isNight = (h = new Date().getHours()) => cfg.nightFrom > cfg.nightTo ? (h >= cfg.nightFrom || h < cfg.nightTo) : (h >= cfg.nightFrom && h < cfg.nightTo);
@@ -337,8 +409,10 @@ function loop(){
   renderTrip();
 }
 async function begin(){
+  if(!session){ showLogin(); return; }
   if(!canStart()){
     await refreshStatus();            // quizás ya pagó desde otro lado
+    if(!session) return;
     if(!canStart()){ openPay(); return; }
   }
   T.night=isNight(); T.rate=T.night?cfg.night:cfg.day;
@@ -408,6 +482,7 @@ function openPay(){
     $('#payBtn').textContent='Suscribirme por '+money(PRICE);
   }
   $('#payMailBox').classList.toggle('hide', subActive());
+  if(session && !$('#payMail').value) $('#payMail').value = session.email;
   openDlg($('#dPay'));
 }
 let paying=false;
@@ -417,7 +492,7 @@ async function pay(){
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ toast('Escribí un email válido (el mismo de tu cuenta de Mercado Pago).'); return; }
   paying=true; $('#payBtn').textContent='Abriendo Mercado Pago…';
   try{
-    const r=await api('/api/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device:deviceId,email})});
+    const r=await api('/api/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})});
     LS.set('taxi.payTs',Date.now());
     window.location.href=r.url;      // se completa el pago en Mercado Pago y vuelve a la app
   }catch(e){
@@ -468,6 +543,7 @@ $('#sumOk').addEventListener('click',()=>closeDlg($('#dSum')));
 $('#payBtn').addEventListener('click',pay);
 $('#payClose').addEventListener('click',()=>closeDlg($('#dPay')));
 $('#bSub').addEventListener('click',openPay);
+$('#bOut').addEventListener('click',logout);
 $('#bSave').addEventListener('click',saveCfg);
 $('#bDef').addEventListener('click',()=>ask('¿Restaurar las tarifas originales?','Restaurar',()=>{ cfg=JSON.parse(JSON.stringify(DEFAULTS)); LS.set('taxi.cfg',cfg); loadCfg(); renderTrip(); toast('Valores restaurados'); }));
 $('#bClear').addEventListener('click',()=>{ if(history.length) ask('¿Borrar el historial? El contador de viajes de prueba no se reinicia.','Borrar',()=>{ history=[]; LS.set('taxi.history',history); renderHist(); }); });
@@ -476,9 +552,12 @@ $('#askYes').addEventListener('click',()=>{ const f=askCb; askCb=null; closeDlg(
 window.addEventListener('beforeunload',e=>{ if(T.st!=='idle'){ e.preventDefault(); e.returnValue=''; } });
 
 // --- Inicio ---
-renderPlan(); renderTrip(); renderHist(); loadCfg();
-reportTrips();
-if(/[?&]pago=/.test(location.search)){ history_clean(); waitPayment(); } else refreshStatus();
+renderPlan(); renderTrip(); renderHist(); loadCfg(); renderAcct();
+if(!session) showLogin();
+else {
+  reportTrips();
+  if(/[?&]pago=/.test(location.search)){ history_clean(); waitPayment(); } else refreshStatus();
+}
 function history_clean(){ try{ window.history.replaceState(null,'',location.pathname); }catch(e){} }
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible' && T.st==='idle'){ reportTrips(); refreshStatus(); } });
 setInterval(()=>{ if(T.st==='idle') renderTrip(); },60000);
