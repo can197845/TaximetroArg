@@ -19,7 +19,7 @@ const crypto = require('crypto');
 
 const DAY = 86400000;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
-const TOKEN = process.env.MP_ACCESS_TOKEN || '';
+const TOKEN = process.env.MP_ACCESS_TOKEN || 'APP_USR-3585737753380043-101114-f899a8c8eba482c0421dd4ed4da513ea-3754974508';
 const BASE_URL = (process.env.BASE_URL || '').replace(/\/$/, '');
 const PRICE = Number(process.env.PRICE || 5000);
 const GRACE_MS = Number(process.env.GRACE_DAYS || 2) * DAY;
